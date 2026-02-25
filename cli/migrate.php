@@ -6,6 +6,8 @@
  * Purpose: Run SQL migrations from database/migrations
  * Usage:
  *   php cli/migrate.php
+ * Notes:
+ *   - MySQL/MariaDB DDL can implicitly commit -> rollback only when inTransaction()
  * ==============================================================
  */
 declare(strict_types=1);
@@ -81,18 +83,35 @@ foreach ($files as $file) {
     echo "Applying {$name}...\n";
 
     try {
-        $pdo->beginTransaction();
+        // ------------------------------------------------------
+        // Try transaction (best effort). DDL may auto-commit.
+        // ------------------------------------------------------
+        $startedTx = false;
+        if (!$pdo->inTransaction()) {
+            $startedTx = $pdo->beginTransaction();
+        }
+
         $pdo->exec($sql);
 
         $stmt = $pdo->prepare("INSERT INTO schema_migrations (migration) VALUES (:m)");
         $stmt->execute(['m' => $name]);
 
-        $pdo->commit();
+        if ($pdo->inTransaction()) {
+            $pdo->commit();
+        }
+
         $ran++;
         echo "OK: {$name}\n";
+
     } catch (Throwable $e) {
-        $pdo->rollBack();
-        fwrite(STDERR, "FAILED: {$name}\n" . $e->getMessage() . "\n");
+
+        // Only rollback if there is an active transaction
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        fwrite(STDERR, "FAILED: {$name}\n");
+        fwrite(STDERR, $e->getMessage() . "\n");
         exit(1);
     }
 }
