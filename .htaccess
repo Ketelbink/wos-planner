@@ -1,0 +1,14 @@
+RewriteEngine On
+
+# --------------------------------------------------------------
+# WoS Planner – subfolder front controller
+# /planner/*  ->  /planner/public/index.php
+# --------------------------------------------------------------
+
+# Als het echt een file/dir is in /planner, serve die direct
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Alles naar planner/public/index.php
+RewriteRule ^ public/index.php [L,QSA]

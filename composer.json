@@ -1,0 +1,10 @@
+{
+  "name": "wos/planner",
+  "type": "project",
+  "require": {},
+  "autoload": {
+    "psr-4": {
+      "Planner\\": "src/"
+    }
+  }
+}

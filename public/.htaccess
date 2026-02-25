@@ -1,0 +1,9 @@
+RewriteEngine On
+
+# Als bestand/dir bestaat, serve die direct
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Alles naar index.php
+RewriteRule ^ index.php [L]
