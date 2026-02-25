@@ -1,0 +1,15 @@
+html, body { height: 100%; margin: 0; font-family: Arial, sans-serif; background: #0b1220; color: #e6edf3; }
+#topbar {
+  position: fixed; top: 10px; left: 10px; right: 10px;
+  display: flex; gap: 10px; align-items: center;
+  background: rgba(10,16,28,0.85); border: 1px solid rgba(255,255,255,0.08);
+  padding: 10px; border-radius: 10px; z-index: 10;
+}
+#canvasWrap { position: fixed; inset: 0; }
+#mapCanvas { width: 100%; height: 100%; display: block; }
+input, select, button {
+  background: #121b2f; color: #e6edf3; border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px; padding: 8px 10px;
+}
+button { cursor: pointer; }
+#status { margin-left: auto; opacity: 0.9; font-size: 12px; }
