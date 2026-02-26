@@ -1,0 +1,46 @@
+{
+  "schema": "wos-planner-seed-v1",
+  "name": "default-system-seed-minimal",
+  "objects": [
+    {
+      "type": "castle",
+      "x": 15,
+      "y": 15,
+      "layer": "system",
+      "is_locked": 1,
+      "meta_json": "{\"tag\": \"Castle\", \"note\": \"System: Castle\", \"color\": \"rgba(90,242,196,.40)\", \"footprint\": [{\"dx\": 0, \"dy\": 0}]}"
+    },
+    {
+      "type": "tower",
+      "x": 10,
+      "y": 10,
+      "layer": "system",
+      "is_locked": 1,
+      "meta_json": "{\"tag\": \"Tower\", \"note\": \"System: Tower\", \"color\": \"rgba(90,242,196,.30)\"}"
+    },
+    {
+      "type": "tower",
+      "x": 20,
+      "y": 10,
+      "layer": "system",
+      "is_locked": 1,
+      "meta_json": "{\"tag\": \"Tower\", \"note\": \"System: Tower\", \"color\": \"rgba(90,242,196,.30)\"}"
+    },
+    {
+      "type": "facility",
+      "x": 10,
+      "y": 20,
+      "layer": "system",
+      "is_locked": 1,
+      "meta_json": "{\"tag\": \"Facility\", \"note\": \"System: Facility\", \"color\": \"rgba(90,242,196,.25)\"}"
+    },
+    {
+      "type": "obstacle",
+      "x": 22,
+      "y": 18,
+      "layer": "system",
+      "is_locked": 1,
+      "meta_json": "{\"tag\": \"Rock\", \"note\": \"System: Obstacle\", \"color\": \"rgba(90,242,196,.18)\"}"
+    }
+  ]
+}

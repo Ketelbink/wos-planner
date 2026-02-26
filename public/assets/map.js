@@ -1,405 +1,529 @@
-(() => {
-  // ============================================================
-  // WoS Planner – Map MVP (Isometric Render)
-  // File: public/assets/map.js
-  // Notes:
-  //  - Data coords remain square grid (x,y) with origin bottom-left.
-  //  - Rendering uses an isometric (diamond) projection.
-  //  - Basic depth sorting by (x + yTop).
-  // ============================================================
 
-  const gridW = window.MAP_CFG.width;
-  const gridH = window.MAP_CFG.height;
-  const slug  = window.MAP_CFG.slug;
-  const base  = window.MAP_CFG.basePath || "";
+/* WoS Planner – V1.0 Step1-5 integrated (repo-native)
+ * Uses MAP_CFG from /map/{slug} route:
+ *   { slug,width,height,basePath }
+ */
 
-  const canvas = document.getElementById("mapCanvas");
-  const ctx = canvas.getContext("2d");
-  const statusEl = document.getElementById("status");
+const cfg = window.MAP_CFG || {slug:'', width:60, height:60, basePath:''};
+const API = {
+  objects: (layer='all') => `${cfg.basePath}/api/maps/${encodeURIComponent(cfg.slug)}/objects?xmin=0&xmax=${cfg.width-1}&ymin=0&ymax=${cfg.height-1}&layer=${encodeURIComponent(layer)}`,
+  tile: (x,y,layer='all') => `${cfg.basePath}/api/maps/${encodeURIComponent(cfg.slug)}/tile?x=${x}&y=${y}&layer=${encodeURIComponent(layer)}`,
+  objectTypes: () => `${cfg.basePath}/api/object-types`,
+  create: () => `${cfg.basePath}/api/maps/${encodeURIComponent(cfg.slug)}/objects/create`,
+  update: (id) => `${cfg.basePath}/api/objects/${id}/update`,
+  move: (id) => `${cfg.basePath}/api/objects/${id}/move`,
+  del: (id) => `${cfg.basePath}/api/objects/${id}/delete`,
+  export: (layer='all') => `${cfg.basePath}/api/maps/${encodeURIComponent(cfg.slug)}/export?layer=${encodeURIComponent(layer)}`,
+  import: (dryRun=1) => `${cfg.basePath}/api/maps/${encodeURIComponent(cfg.slug)}/import?dryRun=${dryRun?1:0}`,
+};
 
-  const typeEl  = document.getElementById("objType");
-  const noteEl  = document.getElementById("note");
-  const tagEl   = document.getElementById("tag");
-  const colorEl = document.getElementById("color");
+async function apiJson(url, opts = {}) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 12000); // 12s timeout
 
-  // ------------------------------------------------------------
-  // CAMERA
-  // ------------------------------------------------------------
-  // tileWidth in px controls zoom. tileHeight is half for diamond.
-  let tw = 48;
-  let th = 24;
-
-  // pan offsets in px (screen space)
-  let originX = 240;
-  let originY = 120;
-
-  // state
-  let objects = [];
-  let lastFetchKey = "";
-
-  // ------------------------------------------------------------
-  // COORDINATE HELPERS
-  // ------------------------------------------------------------
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function yToTop(y) { return (gridH - 1) - y; }
-  function topToY(yTop) { return (gridH - 1) - yTop; }
-
-  // Grid (x, yBottomLeft) -> Screen (sx, syTopPoint)
-  function gridToScreen(x, y) {
-    const yTop = yToTop(y);
-    return {
-      sx: originX + (x - yTop) * (tw / 2),
-      sy: originY + (x + yTop) * (th / 2),
-      yTop
-    };
-  }
-
-  // Screen (sx, sy) -> Grid tile (x, yBottomLeft)
-  // Uses inverse of diamond projection. Works well for MVP.
-  function screenToGrid(sx, sy) {
-    const dx = sx - originX;
-    const dy = sy - originY;
-
-    const a = dx / (tw / 2);
-    const b = dy / (th / 2);
-
-    const xf = (a + b) / 2;
-    const yTopf = (b - a) / 2;
-
-    const x = Math.floor(xf);
-    const yTop = Math.floor(yTopf);
-    const y = topToY(yTop);
-
-    return { x, y, yTop };
-  }
-
-  // Approximate bbox for API fetch using the 4 corners of the screen.
-  function viewportBBox() {
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
-
-    const corners = [
-      screenToGrid(0, 0),
-      screenToGrid(w, 0),
-      screenToGrid(0, h),
-      screenToGrid(w, h),
-    ];
-
-    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
-
-    for (const c of corners) {
-      xmin = Math.min(xmin, c.x);
-      xmax = Math.max(xmax, c.x);
-      ymin = Math.min(ymin, c.y);
-      ymax = Math.max(ymax, c.y);
-    }
-
-    // pad a bit so we don't pop-in while panning
-    xmin -= 6; xmax += 6; ymin -= 6; ymax += 6;
-
-    xmin = clamp(xmin, 0, gridW - 1);
-    xmax = clamp(xmax, 0, gridW - 1);
-    ymin = clamp(ymin, 0, gridH - 1);
-    ymax = clamp(ymax, 0, gridH - 1);
-
-    if (xmax < xmin) [xmin, xmax] = [xmax, xmin];
-    if (ymax < ymin) [ymin, ymax] = [ymax, ymin];
-
-    return { xmin, xmax, ymin, ymax };
-  }
-
-  // ------------------------------------------------------------
-  // OBJECT HELPERS
-  // ------------------------------------------------------------
-  function footprint(type) {
-    // anchor is bottom-left
-    switch (type) {
-      case "CITY": return { w: 2, h: 2 };
-      default:     return { w: 1, h: 1 };
-    }
-  }
-
-  function heightPx(type) {
-    switch (type) {
-      case "HQ":    return Math.round(th * 2.4);
-      case "CITY":  return Math.round(th * 1.8);
-      case "TRAP":  return Math.round(th * 1.4);
-      case "BANNER":return Math.round(th * 1.1);
-      default:      return Math.round(th * 1.0);
-    }
-  }
-
-  function parseMeta(o) {
-    try {
-      if (!o.meta_json) return {};
-      return typeof o.meta_json === "string" ? JSON.parse(o.meta_json) : (o.meta_json || {});
-    } catch {
-      return {};
-    }
-  }
-
-  function colorFor(o) {
-    const m = parseMeta(o);
-    return m.color || "#7aa2ff";
-  }
-
-  function labelFor(o) {
-    const m = parseMeta(o);
-    const tag = (m.tag || "").trim();
-    return tag ? `${o.type} ${tag}` : o.type;
-  }
-
-  // ------------------------------------------------------------
-  // DRAW
-  // ------------------------------------------------------------
-  function resize() {
-    canvas.width  = canvas.clientWidth * devicePixelRatio;
-    canvas.height = canvas.clientHeight * devicePixelRatio;
-    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-    draw();
-  }
-
-  function drawDiamondTop(sx, sy, fillStyle, alpha = 0.85) {
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = fillStyle;
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.lineTo(sx + tw/2, sy + th/2);
-    ctx.lineTo(sx, sy + th);
-    ctx.lineTo(sx - tw/2, sy + th/2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.globalAlpha = 1.0;
-  }
-
-  function drawPrism(sx, sy, fillStyle, hPx) {
-    // Draw a simple "height" effect: top diamond + two side faces.
-    const topY = sy - hPx;
-
-    ctx.globalAlpha = 0.65;
-    ctx.fillStyle = fillStyle;
-
-    // left face
-    ctx.beginPath();
-    ctx.moveTo(sx - tw/2, topY + th/2);
-    ctx.lineTo(sx,        topY + th);
-    ctx.lineTo(sx,        sy + th);
-    ctx.lineTo(sx - tw/2, sy + th/2);
-    ctx.closePath();
-    ctx.fill();
-
-    // right face
-    ctx.beginPath();
-    ctx.moveTo(sx + tw/2, topY + th/2);
-    ctx.lineTo(sx,        topY + th);
-    ctx.lineTo(sx,        sy + th);
-    ctx.lineTo(sx + tw/2, sy + th/2);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.globalAlpha = 1.0;
-
-    drawDiamondTop(sx, topY, fillStyle, 0.9);
-  }
-
-  function drawBackground() {
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#0b1220";
-    ctx.fillRect(0, 0, w, h);
-  }
-
-  function drawHoverTile(tile) {
-    if (!tile) return;
-    const { x, y } = tile;
-    if (x < 0 || y < 0 || x >= gridW || y >= gridH) return;
-    const p = gridToScreen(x, y);
-    drawDiamondTop(p.sx, p.sy, "rgba(255,255,255,0.10)", 1.0);
-  }
-
-  function drawObjects() {
-    const sorted = [...objects].sort((a, b) => {
-      const ayTop = yToTop(a.y);
-      const byTop = yToTop(b.y);
-      const ka = (a.x + ayTop);
-      const kb = (b.x + byTop);
-      if (ka !== kb) return ka - kb;
-      return a.x - b.x;
+  let res, text, data;
+  try {
+    res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json' },
+      signal: ctrl.signal,
+      ...opts,
     });
+    text = await res.text();
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
 
-    for (const o of sorted) {
-      const fp = footprint(o.type);
-      const fill = colorFor(o);
-      const hPx = heightPx(o.type);
-
-      for (let dx = 0; dx < fp.w; dx++) {
-        for (let dy = 0; dy < fp.h; dy++) {
-          const tx = o.x + dx;
-          const ty = o.y + dy;
-          const p = gridToScreen(tx, ty);
-
-          if (dx === 0 && dy === 0) {
-            drawPrism(p.sx, p.sy, fill, hPx);
-          } else {
-            drawDiamondTop(p.sx, p.sy, fill, 0.35);
-          }
-        }
-      }
-
-      if (tw >= 44) {
-        const p = gridToScreen(o.x, o.y);
-        ctx.fillStyle = "rgba(0,0,0,0.55)";
-        ctx.fillRect(p.sx - 70, p.sy - hPx - 18, 140, 18);
-        ctx.fillStyle = "#e6edf3";
-        ctx.font = "12px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText(labelFor(o), p.sx, p.sy - hPx - 5);
-        ctx.textAlign = "start";
-      }
+    if (!res.ok) {
+      const msg = data?.error || data?.message || res.statusText;
+      throw new Error(`${res.status} ${msg}`);
     }
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error(`timeout calling ${url}`);
+    throw e;
+  } finally {
+    clearTimeout(t);
   }
+}
+function safeJson(v){
+  if(!v) return null;
+  if(typeof v === 'object') return v;
+  try{return JSON.parse(v);}catch{ return null; }
+}
 
-  let hoverTile = null;
+const els = {
+  canvas: document.getElementById('mapCanvas'),
+  status: document.getElementById('status'),
 
-  function draw() {
-    drawBackground();
-    drawObjects();
-    drawHoverTile(hoverTile);
-  }
+  // tools
+  toolSelect: document.getElementById('toolSelect'),
+  toolPlace: document.getElementById('toolPlace'),
 
-  // ------------------------------------------------------------
-  // API
-  // ------------------------------------------------------------
-  async function apiGetObjects(bbox) {
-    const key = `${bbox.xmin},${bbox.xmax},${bbox.ymin},${bbox.ymax}|${tw}|${originX}|${originY}`;
-    if (key === lastFetchKey) return;
-    lastFetchKey = key;
+  // palette
+  typeSearch: document.getElementById('typeSearch'),
+  typePalette: document.getElementById('typePalette'),
 
-    const url = `${base}/api/maps/${encodeURIComponent(slug)}/objects?xmin=${bbox.xmin}&xmax=${bbox.xmax}&ymin=${bbox.ymin}&ymax=${bbox.ymax}`;
+  // top actions
+  btnExport: document.getElementById('btnExport'),
+  btnImport: document.getElementById('btnImport'),
+  btnSeedSystem: document.getElementById('btnSeedSystem'),
+  toggleSystem: document.getElementById('toggleSystem'),
+  toggleLabels: document.getElementById('toggleLabels'),
+  toggleFootprints: document.getElementById('toggleFootprints'),
 
-    try {
-      const res = await fetch(url);
-      const data = await res.json();
-      objects = data.objects || [];
+  // properties
+  propId: document.getElementById('propId'),
+  propType: document.getElementById('propType'),
+  propPos: document.getElementById('propPos'),
+  propLayer: document.getElementById('propLayer'),
+  propLocked: document.getElementById('propLocked'),
+  inpTag: document.getElementById('inpTag'),
+  inpNote: document.getElementById('inpNote'),
+  inpColor: document.getElementById('inpColor'),
+  btnSave: document.getElementById('btnSave'),
+  btnMove: document.getElementById('btnMove'),
+  btnDelete: document.getElementById('btnDelete'),
 
-      statusEl.textContent = `Objects: ${objects.length} | View: x${bbox.xmin}-${bbox.xmax} y${bbox.ymin}-${bbox.ymax} | tw=${tw}`;
+  // import modal
+  modalImport: document.getElementById('modalImport'),
+  btnCloseImport: document.getElementById('btnCloseImport'),
+  importText: document.getElementById('importText'),
+  btnDryRun: document.getElementById('btnDryRun'),
+  btnApply: document.getElementById('btnApply'),
+  importReport: document.getElementById('importReport'),
+};
+
+const state = {
+  mode: 'select', // select | place | move
+  gridW: cfg.width,
+  gridH: cfg.height,
+  tileSize: 24,
+  zoom: 1,
+  objects: [],
+  objectTypes: [],
+  selectedTypeCode: 'player_object',
+  selected: null,
+  hover: null,
+  rotation: 0,
+  showSystem: true,
+  showLabels: true,
+  showFootprints: false,
+};
+
+function setStatus(s){ if(els.status) els.status.textContent = s; }
+
+function setMode(m){
+  state.mode = m;
+  if(els.toolSelect) els.toolSelect.classList.toggle('primary', m==='select');
+  if(els.toolPlace) els.toolPlace.classList.toggle('primary', m==='place');
+  if(m !== 'place'){ state.hover = null; }
+  draw();
+}
+
+function typeDefaultMeta(t){
+  return safeJson(t?.default_meta_json) || {};
+}
+function renderPalette(){
+  if(!els.typePalette) return;
+  const q = (els.typeSearch?.value || '').trim().toLowerCase();
+  const types = (state.objectTypes || []).filter(t=>{
+    if(!q) return true;
+    return (t.name||'').toLowerCase().includes(q) || (t.code||'').toLowerCase().includes(q);
+  });
+  els.typePalette.innerHTML = '';
+  for(const t of types){
+    const btn = document.createElement('button');
+    btn.className = 'pbtn' + (t.code === state.selectedTypeCode ? ' active' : '');
+    const meta = typeDefaultMeta(t);
+    const tag = meta.tag || '';
+    btn.innerHTML = `<div>${t.name || t.code}</div><span class="sub">${tag ? tag : t.code}</span>`;
+    btn.addEventListener('click', ()=>{
+      state.selectedTypeCode = t.code;
+      state.rotation = 0;
+      renderPalette();
       draw();
-    } catch (e) {
-      statusEl.textContent = `API error: ${e?.message || e}`;
+    });
+    els.typePalette.appendChild(btn);
+  }
+}
+function getSelectedType(){
+  return (state.objectTypes || []).find(t => t.code === state.selectedTypeCode) || null;
+}
+function rotatedFootprint(fp, rotation){
+  const r = ((rotation%4)+4)%4;
+  if(!Array.isArray(fp) || fp.length===0) return [{dx:0,dy:0}];
+  return fp.map(t=>{
+    const dx=Number(t.dx||0), dy=Number(t.dy||0);
+    if(r===0) return {dx,dy};
+    if(r===1) return {dx:-dy, dy:dx};
+    if(r===2) return {dx:-dx, dy:-dy};
+    return {dx:dy, dy:-dx};
+  });
+}
+
+function fitCanvas(){
+  const rect = els.canvas.parentElement.getBoundingClientRect();
+  els.canvas.width = Math.floor(rect.width * devicePixelRatio);
+  els.canvas.height = Math.floor(rect.height * devicePixelRatio);
+  draw();
+}
+
+function tileFromEvent(ev){
+  const rect = els.canvas.getBoundingClientRect();
+  const cx = (ev.clientX - rect.left) * devicePixelRatio;
+  const cy = (ev.clientY - rect.top) * devicePixelRatio;
+  const ts = state.tileSize * state.zoom * devicePixelRatio;
+  return { x: Math.floor(cx/ts), y: Math.floor(cy/ts) };
+}
+
+async function loadObjectTypes(){
+setStatus('loading types�');
+  try{
+    const data = await apiJson(API.objectTypes());
+    state.objectTypes = data.object_types || [];
+    if(state.objectTypes.find(t=>t.code==='player_object')) state.selectedTypeCode='player_object';
+    else if(state.objectTypes.length) state.selectedTypeCode = state.objectTypes[0].code;
+    renderPalette();
+  }catch(e){
+    console.warn('object types load failed', e);
+    state.objectTypes = [{code:'player_object', name:'Player Object', footprint_json:'[{"dx":0,"dy":0}]', default_meta_json:'{}'}];
+    state.selectedTypeCode='player_object';
+    renderPalette();
+  }
+}
+
+async function loadObjects(){
+setStatus('loading objects�');
+  const layer = state.showSystem ? 'all' : 'object';
+  const data = await apiJson(API.objects(layer));
+  const list = Array.isArray(data.objects) ? data.objects : (Array.isArray(data) ? data : []);
+state.objects = list;
+  draw();
+}
+
+function draw(){
+  const ctx = els.canvas.getContext('2d');
+  const W = els.canvas.width, H = els.canvas.height;
+  ctx.clearRect(0,0,W,H);
+
+  const ts = state.tileSize * state.zoom * devicePixelRatio;
+
+  // grid
+  ctx.globalAlpha = 0.25;
+  ctx.strokeStyle = 'rgba(255,255,255,.25)';
+  ctx.lineWidth = 1;
+  for(let x=0; x<=state.gridW; x++){
+    ctx.beginPath();
+    ctx.moveTo(x*ts, 0);
+    ctx.lineTo(x*ts, state.gridH*ts);
+    ctx.stroke();
+  }
+  for(let y=0; y<=state.gridH; y++){
+    ctx.beginPath();
+    ctx.moveTo(0, y*ts);
+    ctx.lineTo(state.gridW*ts, y*ts);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // hover preview (place)
+  if(state.mode==='place' && state.hover?.tiles){
+    ctx.strokeStyle = 'rgba(90,242,196,.85)';
+    ctx.lineWidth = 2;
+    for(const t of state.hover.tiles){
+      ctx.strokeRect(t.x*ts+2, t.y*ts+2, ts-4, ts-4);
     }
+    ctx.lineWidth = 1;
   }
 
-  async function apiPlaceObject(x, y) {
-    const type = typeEl.value;
-    const meta = {
-      note: (noteEl.value || "").trim(),
-      tag: (tagEl.value || "").trim(),
-      color: (colorEl.value || "#7aa2ff")
-    };
+    // objects (system first)
+  const base = Array.isArray(state.objects) ? state.objects : [];
+  const objs = [...base].sort((a,b)=>{
+    const la=(a.layer==='system'?0:1), lb=(b.layer==='system'?0:1);
+    if(la!==lb) return la-lb;
+    return (a.id||0)-(b.id||0);
+  });
 
-    try {
-      const res = await fetch(`${base}/api/maps/${encodeURIComponent(slug)}/place`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, x, y, meta })
-      });
+  for(const o of objs){
+    if(!state.showSystem && o.layer==='system') continue;
+    const meta = safeJson(o.meta_json) || {};
+    const color = meta.color || (o.layer==='system' ? 'rgba(90,242,196,.25)' : 'rgba(122,162,255,.25)');
+    const fp = meta.footprint || [{dx:0,dy:0}];
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(data.error || "Place failed");
-        return;
+    for(const p of fp){
+      const x = (o.x + Number(p.dx||0));
+      const y = (o.y + Number(p.dy||0));
+      ctx.fillStyle = color;
+      ctx.fillRect(x*ts+1, y*ts+1, ts-2, ts-2);
+      if(state.showFootprints){
+        ctx.strokeStyle='rgba(255,255,255,.25)';
+        ctx.strokeRect(x*ts+2, y*ts+2, ts-4, ts-4);
       }
+    }
 
-      await apiGetObjects(viewportBBox());
-    } catch (e) {
-      alert(`API error: ${e?.message || e}`);
+    // selection outline
+    if(state.selected && state.selected.id === o.id){
+      ctx.strokeStyle = 'rgba(255,255,255,.9)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(o.x*ts+2, o.y*ts+2, ts-4, ts-4);
+      ctx.lineWidth = 1;
+    }
+
+    if(state.showLabels){
+      const label = meta.tag || o.type || '';
+      if(label){
+        ctx.fillStyle='rgba(255,255,255,.85)';
+        ctx.font = `${12*devicePixelRatio}px system-ui`;
+        ctx.fillText(label, o.x*ts + 4, o.y*ts + 14*devicePixelRatio);
+      }
     }
   }
+}
 
-  // ------------------------------------------------------------
-  // INPUT (PAN/ZOOM/CLICK)
-  // ------------------------------------------------------------
-  let dragging = false;
-  let didDrag = false;
-  let dragStart = { x: 0, y: 0, ox: 0, oy: 0 };
-
-  canvas.addEventListener("mousedown", (e) => {
-    dragging = true;
-    didDrag = false;
-    dragStart = { x: e.clientX, y: e.clientY, ox: originX, oy: originY };
-  });
-
-  window.addEventListener("mouseup", () => { dragging = false; });
-
-  window.addEventListener("mousemove", (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
-
-    hoverTile = screenToGrid(sx, sy);
-
-    if (!dragging) {
-      draw();
-      return;
-    }
-
-    const dx = e.clientX - dragStart.x;
-    const dy = e.clientY - dragStart.y;
-
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) didDrag = true;
-
-    originX = dragStart.ox + dx;
-    originY = dragStart.oy + dy;
-
+function fillProperties(o){
+  state.selected = o;
+  if(!o){
+    els.propId.textContent = '-';
+    els.propType.textContent = '-';
+    els.propPos.textContent = '-';
+    els.propLayer.textContent = '-';
+    els.propLocked.textContent = '-';
+    els.inpTag.value = '';
+    els.inpNote.value = '';
+    els.inpColor.value = '';
+    els.btnSave.disabled = true;
+    els.btnMove.disabled = true;
+    els.btnDelete.disabled = true;
     draw();
-    apiGetObjects(viewportBBox());
-  });
+    return;
+  }
+  const meta = safeJson(o.meta_json) || {};
+  els.propId.textContent = o.id;
+  els.propType.textContent = o.type;
+  els.propPos.textContent = `${o.x},${o.y}`;
+  els.propLayer.textContent = o.layer || 'object';
+  els.propLocked.textContent = (Number(o.is_locked||0)===1) ? 'yes' : 'no';
 
-  canvas.addEventListener("wheel", (e) => {
-    e.preventDefault();
+  els.inpTag.value = meta.tag || '';
+  els.inpNote.value = meta.note || '';
+  // allow both #hex and rgba – keep raw
+  els.inpColor.value = (meta.color && meta.color.startsWith('#')) ? meta.color : '#7aa2ff';
 
-    const delta = e.deltaY > 0 ? -4 : 4;
+  const locked = Number(o.is_locked||0)===1;
+  els.btnSave.disabled = locked;
+  els.btnMove.disabled = locked;
+  els.btnDelete.disabled = locked;
+  draw();
+}
 
-    tw = clamp(tw + delta, 20, 120);
-    th = Math.round(tw / 2);
+async function createObjectAt(x,y){
+  const t = getSelectedType();
+  const type_code = t?.code || state.selectedTypeCode || 'player_object';
 
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
+  let fp = [{dx:0,dy:0}];
+  try{
+    const rawFp = safeJson(t?.footprint_json) || [{dx:0,dy:0}];
+    fp = rotatedFootprint(rawFp, state.rotation);
+  }catch(e){}
 
-    const before = screenToGrid(mx, my);
-    const afterPos = gridToScreen(before.x, before.y);
+  const meta = { footprint: fp };
+  await apiJson(API.create(), {method:'POST', body: JSON.stringify({type_code, x, y, meta})});
+}
 
-    originX += (mx - afterPos.sx);
-    originY += (my - afterPos.sy);
+async function onCanvasClick(ev){
+  const {x,y} = tileFromEvent(ev);
 
+  if(state.mode==='move' && state.selected){
+    try{
+      await apiJson(API.move(state.selected.id), {method:'POST', body: JSON.stringify({x,y})});
+      setMode('select');
+      await loadObjects();
+    }catch(e){ alert('Move failed: '+e.message); }
+    return;
+  }
+
+  if(state.mode==='place'){
+    try{
+      await createObjectAt(x,y);
+      await loadObjects();
+    }catch(e){ alert('Place failed: '+e.message); }
+    return;
+  }
+
+  // select mode: tile lookup
+  try{
+    const data = await apiJson(API.tile(x,y, state.showSystem?'all':'object'));
+    fillProperties(data.object);
+  }catch(e){
+    console.warn(e);
+  }
+}
+
+function onCanvasMove(ev){
+  const {x,y} = tileFromEvent(ev);
+  if(state.mode !== 'place'){
+    if(state.hover){ state.hover=null; draw(); }
+    return;
+  }
+  if(x<0||y<0||x>=state.gridW||y>=state.gridH){
+    if(state.hover){ state.hover=null; draw(); }
+    return;
+  }
+  const t = getSelectedType();
+  let fp = [{dx:0,dy:0}];
+  try{
+    const rawFp = safeJson(t?.footprint_json) || [{dx:0,dy:0}];
+    fp = rotatedFootprint(rawFp, state.rotation);
+  }catch(e){}
+  const tiles = fp.map(p=> ({x:x+Number(p.dx||0), y:y+Number(p.dy||0)}));
+  const next = {x,y,tiles};
+  const changed = !state.hover || state.hover.x!==next.x || state.hover.y!==next.y;
+  if(changed){ state.hover = next; draw(); }
+}
+
+async function saveSelected(){
+  if(!state.selected) return;
+  const body = {
+    tag: els.inpTag.value,
+    note: els.inpNote.value,
+    color: els.inpColor.value,
+  };
+  await apiJson(API.update(state.selected.id), {method:'POST', body: JSON.stringify(body)});
+  await loadObjects();
+}
+async function deleteSelected(){
+  if(!state.selected) return;
+  if(!confirm('Delete this object?')) return;
+  await apiJson(API.del(state.selected.id), {method:'POST'});
+  fillProperties(null);
+  await loadObjects();
+}
+function enterMove(){
+  if(!state.selected) return;
+  setMode('move');
+  setStatus('Move: click new tile');
+}
+
+async function exportJson(){
+  const layer = state.showSystem ? 'all' : 'object';
+  const data = await apiJson(API.export(layer));
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${cfg.slug}-${layer}-export.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=> URL.revokeObjectURL(a.href), 1500);
+}
+
+function openImport(){
+  els.modalImport.classList.remove('hidden');
+  els.importReport.textContent='';
+  els.btnApply.disabled = true;
+}
+function closeImport(){ els.modalImport.classList.add('hidden'); }
+
+function parseImport(){
+  const raw = els.importText.value.trim();
+  if(!raw) throw new Error('Empty JSON');
+  const data = JSON.parse(raw);
+  if(data.schema === 'wos-planner-export-v1' && Array.isArray(data.objects)){
+    return {objects: data.objects};
+  }
+  if(Array.isArray(data.objects)) return data;
+  if(Array.isArray(data)) return {objects:data};
+  throw new Error('Invalid format. Expect {objects:[...]} or export payload.');
+}
+
+async function runImport(dryRun){
+  const payload = parseImport();
+  const data = await apiJson(API.import(dryRun), {method:'POST', body: JSON.stringify(payload)});
+  els.importReport.textContent = JSON.stringify(data,null,2);
+  els.btnApply.disabled = dryRun ? false : true;
+  return data;
+}
+
+async function seedSystem(){
+  const res = await fetch(`${cfg.basePath}/seeds/system_seed_default.json`);
+  if(!res.ok) throw new Error('Seed file not found');
+  const seed = await res.json();
+  const payload = seed.schema === 'wos-planner-seed-v1' ? {objects: seed.objects} : seed;
+  const report = await apiJson(API.import(true), {method:'POST', body: JSON.stringify(payload)});
+  const msg = `Seed dry-run\nnew: ${(report.new||[]).length}\nconflicts: ${(report.conflicts||[]).length}\nout_of_bounds: ${(report.out_of_bounds||[]).length}\n\nApply seed now?`;
+  if(!confirm(msg)) return;
+  await apiJson(API.import(false), {method:'POST', body: JSON.stringify(payload)});
+  await loadObjects();
+}
+
+window.addEventListener('keydown', (ev)=>{
+  if(state.mode !== 'place') return;
+  if(ev.key==='r' || ev.key==='R'){
+    state.rotation = (state.rotation + 1) % 4;
     draw();
-    apiGetObjects(viewportBBox());
-  }, { passive: false });
+  }
+});
 
-  canvas.addEventListener("click", async (e) => {
-    if (didDrag) return;
+// boot
+(async function init(){
+  try{
+    setStatus('loading…');
+    // toggles
+    state.showSystem = !!els.toggleSystem.checked;
+    state.showLabels = !!els.toggleLabels.checked;
+    state.showFootprints = !!els.toggleFootprints.checked;
 
-    const rect = canvas.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
+    await loadObjectTypes();
+    await loadObjects();
+    fillProperties(null);
 
-    const { x, y } = screenToGrid(sx, sy);
+    setMode('select');
+    els.canvas.addEventListener('click', onCanvasClick);
+    els.canvas.addEventListener('mousemove', onCanvasMove);
+    els.canvas.addEventListener('mouseleave', ()=>{ if(state.hover){ state.hover=null; draw(); } });
 
-    if (x < 0 || y < 0 || x >= gridW || y >= gridH) return;
+    window.addEventListener('resize', fitCanvas);
+    fitCanvas();
 
-    const ok = confirm(`Place ${typeEl.value} at (${x},${y}) ?`);
-    if (!ok) return;
+    // wire ui (null-safe)
+if (els.toolSelect) els.toolSelect.addEventListener('click', ()=> setMode('select'));
+if (els.toolPlace)  els.toolPlace.addEventListener('click', ()=> setMode('place'));
+if (els.typeSearch) els.typeSearch.addEventListener('input', renderPalette);
 
-    await apiPlaceObject(x, y);
-  });
+if (els.toggleSystem) els.toggleSystem.addEventListener('change', async ()=>{
+  state.showSystem = !!els.toggleSystem.checked;
+  await loadObjects();
+});
+if (els.toggleLabels) els.toggleLabels.addEventListener('change', ()=>{
+  state.showLabels = !!els.toggleLabels.checked; draw();
+});
+if (els.toggleFootprints) els.toggleFootprints.addEventListener('change', ()=>{
+  state.showFootprints = !!els.toggleFootprints.checked; draw();
+});
 
-  // ------------------------------------------------------------
-  // INIT
-  // ------------------------------------------------------------
-  window.addEventListener("resize", resize);
-  resize();
-  apiGetObjects(viewportBBox());
+if (els.btnSave) els.btnSave.addEventListener('click', async()=>{ try{ await saveSelected(); }catch(e){ alert('Save failed: '+e.message);} });
+if (els.btnMove) els.btnMove.addEventListener('click', ()=> enterMove());
+if (els.btnDelete) els.btnDelete.addEventListener('click', async()=>{ try{ await deleteSelected(); }catch(e){ alert('Delete failed: '+e.message);} });
+
+if (els.btnExport) els.btnExport.addEventListener('click', async()=>{ try{ await exportJson(); }catch(e){ alert('Export failed: '+e.message);} });
+if (els.btnImport) els.btnImport.addEventListener('click', openImport);
+if (els.btnSeedSystem) els.btnSeedSystem.addEventListener('click', async()=>{ try{ await seedSystem(); }catch(e){ alert('Seed failed: '+e.message);} });
+
+if (els.btnCloseImport) els.btnCloseImport.addEventListener('click', closeImport);
+if (els.modalImport) els.modalImport.addEventListener('click', (ev)=>{ if(ev.target===els.modalImport) closeImport();});
+if (els.btnDryRun) els.btnDryRun.addEventListener('click', async()=>{ try{ await runImport(true);}catch(e){ alert('Dry-run failed: '+e.message);} });
+if (els.btnApply) els.btnApply.addEventListener('click', async()=>{
+  try{
+    await runImport(false);
+    await loadObjects();
+    closeImport();
+  }catch(e){
+    alert('Apply failed: '+e.message);
+  }
+});
+
+console.log('ABOUT TO SET READY');
+setStatus('ready');
+} catch(e){
+  console.error('INIT ERROR', e);
+  setStatus('error: ' + e.message);
+}
 })();

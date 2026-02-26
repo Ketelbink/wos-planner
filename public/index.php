@@ -9,13 +9,9 @@
  *   - Loads .env, config, routes, then dispatches
  * ==============================================================
  */
+
 declare(strict_types=1);
 
-/**
- * --------------------------------------------------------------
- * 1. BOOTSTRAP
- * --------------------------------------------------------------
- */
 ini_set('display_errors', '1');
 error_reporting(E_ALL);
 
@@ -25,26 +21,14 @@ require __DIR__ . '/../vendor/autoload.php';
 
 require __DIR__ . '/../config/config.php';
 
-/**
- * --------------------------------------------------------------
- * 2. SERVICES
- * --------------------------------------------------------------
- */
+// Services
 $db     = \Planner\Database::fromConfig($config['db']);
 $router = new \Planner\Router();
 
-/**
- * --------------------------------------------------------------
- * 3. ROUTES (Single Source of Truth)
- * --------------------------------------------------------------
- */
+// Routes (Single Source of Truth)
 require __DIR__ . '/../app/routes.php';
 
-/**
- * --------------------------------------------------------------
- * 4. DISPATCH
- * --------------------------------------------------------------
- */
+// Dispatch
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $uri    = $_SERVER['REQUEST_URI'] ?? '/';
 
@@ -53,25 +37,14 @@ $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
 $basePath   = rtrim(str_replace('\\', '/', dirname($scriptName)), '/');
 $basePath   = preg_replace('#/public$#', '', $basePath) ?: '';
 
-use Planner\Security\Auth;
-
-$user = Auth::currentUser();
+$user = null;
+if (class_exists(\Planner\Security\Auth::class)) {
+    $user = \Planner\Security\Auth::currentUser();
+}
 
 $router->dispatch($method, $uri, [
-  'db'        => $db,
-  'config'    => $config,
-  'base_path' => $basePath,
-  'user'      => $user,
-]);
-```
-
-### 2) Protect endpoints (optional now)
-
-Example:
-
-```php
-use Planner\Security\Auth;
-use Planner\Security\Perm;
-
-Auth::require($ctx['user'] ?? null, Perm::EDIT_WORLD);
+    'db'        => $db,
+    'config'    => $config,
+    'base_path' => $basePath,
+    'user'      => $user,
 ]);

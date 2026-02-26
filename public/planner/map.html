@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WoS Planner</title>
+  <link rel="stylesheet" href="/planner/assets/map.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">WoS Planner</div>
+    <div class="topbar-actions">
+      <label class="toggle"><input id="toggleSystem" type="checkbox" checked> System</label>
+      <label class="toggle"><input id="toggleLabels" type="checkbox" checked> Labels</label>
+      <label class="toggle"><input id="toggleFootprints" type="checkbox"> Footprints</label>
+    </div>
+  </div>
+
+  <div class="shell">
+    <aside class="left">
+      <div class="panel">
+        <div class="panel-title">Tools</div>
+
+        <button class="btn" id="toolPlace">Place</button>
+        <button class="btn" id="toolSelect">Select</button>
+        <button class="btn" id="toolMove" disabled>Move</button>
+        <button class="btn danger" id="toolDelete" disabled>Delete</button>
+
+        <div class="hr"></div>
+
+        <div class="small">
+          <div><b>Mode:</b> <span id="modeLabel">select</span></div>
+          <div><b>Map:</b> <span id="mapSlugLabel">—</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="center">
+      <div class="mapWrap">
+        <canvas id="mapCanvas" width="900" height="900"></canvas>
+      </div>
+    </main>
+
+    <aside class="right">
+      <div class="panel">
+        <div class="panel-title">Properties</div>
+
+        <div id="emptyProps" class="muted">Selecteer een object…</div>
+
+        <div id="props" class="props hidden">
+          <div class="kv"><div class="k">id</div><div class="v" id="p_id">—</div></div>
+          <div class="kv"><div class="k">type</div><div class="v" id="p_type">—</div></div>
+          <div class="kv"><div class="k">x,y</div><div class="v" id="p_xy">—</div></div>
+          <div class="kv"><div class="k">layer</div><div class="v" id="p_layer">—</div></div>
+          <div class="kv"><div class="k">locked</div><div class="v" id="p_locked">—</div></div>
+
+          <div class="hr"></div>
+
+          <label class="field">
+            <span>Tag</span>
+            <input id="f_tag" type="text" placeholder="bijv. REN / tower / route" />
+          </label>
+
+          <label class="field">
+            <span>Note</span>
+            <textarea id="f_note" rows="4" placeholder="korte notitie…"></textarea>
+          </label>
+
+          <label class="field">
+            <span>Color</span>
+            <input id="f_color" type="text" placeholder="#AABBCC" />
+          </label>
+
+          <div class="row">
+            <button class="btn primary" id="btnSave">Save</button>
+            <button class="btn" id="btnMove">Move</button>
+            <button class="btn danger" id="btnDelete">Delete</button>
+          </div>
+
+          <div id="moveHint" class="hint hidden">
+            Move mode actief: klik een nieuwe tile…
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    // The backend should set window.MAP_SLUG on render.
+    window.MAP_SLUG = window.MAP_SLUG || (new URLSearchParams(location.search).get('map') || 'default');
+  </script>
+  <script src="/planner/assets/map.js"></script>
+</body>
+</html>
