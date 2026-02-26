@@ -53,8 +53,25 @@ $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
 $basePath   = rtrim(str_replace('\\', '/', dirname($scriptName)), '/');
 $basePath   = preg_replace('#/public$#', '', $basePath) ?: '';
 
+use Planner\Security\Auth;
+
+$user = Auth::currentUser();
+
 $router->dispatch($method, $uri, [
-    'db'        => $db,
-    'config'    => $config,
-    'base_path' => $basePath, // <- belangrijk
+  'db'        => $db,
+  'config'    => $config,
+  'base_path' => $basePath,
+  'user'      => $user,
+]);
+```
+
+### 2) Protect endpoints (optional now)
+
+Example:
+
+```php
+use Planner\Security\Auth;
+use Planner\Security\Perm;
+
+Auth::require($ctx['user'] ?? null, Perm::EDIT_WORLD);
 ]);

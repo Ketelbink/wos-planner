@@ -37,6 +37,9 @@ Next:
 - Trap footprint definition
 - Trap View mode
 - Alliance trap limits (2 per alliance)
+- System layer support (castle/towers/facilities)
+- Base map seed mechanism
+
 
 ---
 

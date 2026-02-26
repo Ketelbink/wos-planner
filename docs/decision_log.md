@@ -41,3 +41,22 @@ Impact: Placement must validate 4 tiles.
 Decision: Render map as diamond/isometric view, keep square data coords.  
 Reason: Matches in-game look and improves usability.  
 Impact: Frontend uses iso projection + depth sorting; backend unchanged.
+
+-----
+
+
+## 2026-02-26 – System Layer Architecture
+
+Decision:
+All fixed map objects (castle, towers, facilities, obstacles) are stored
+in planner_objects with:
+
+- layer = 'system'
+- is_locked = 1
+
+Reason:
+Single object model keeps occupancy logic unified.
+
+Impact:
+System layer objects block placement and are read-only by default.
+
