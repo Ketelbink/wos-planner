@@ -17,32 +17,21 @@ const API = {
   import: (dryRun=1) => `${cfg.basePath}/api/maps/${encodeURIComponent(cfg.slug)}/import?dryRun=${dryRun?1:0}`,
 };
 
-async function apiJson(url, opts = {}) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 12000); // 12s timeout
-
-  let res, text, data;
-  try {
-    res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
-      signal: ctrl.signal,
-      ...opts,
-    });
-    text = await res.text();
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-
-    if (!res.ok) {
-      const msg = data?.error || data?.message || res.statusText;
-      throw new Error(`${res.status} ${msg}`);
-    }
-    return data;
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error(`timeout calling ${url}`);
-    throw e;
-  } finally {
-    clearTimeout(t);
+async function apiJson(url, opts={}){
+  const res = await fetch(url, {
+    headers: {'Content-Type':'application/json'},
+    ...opts
+  });
+  const text = await res.text();
+  let data;
+  try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = {raw:text}; }
+  if(!res.ok){
+    const msg = data?.error || data?.message || res.statusText;
+    throw new Error(msg);
   }
+  return data;
 }
+
 function safeJson(v){
   if(!v) return null;
   if(typeof v === 'object') return v;
@@ -52,6 +41,15 @@ function safeJson(v){
 const els = {
   canvas: document.getElementById('mapCanvas'),
   status: document.getElementById('status'),
+
+  // drawer + coordbar
+  propDrawer: document.getElementById('propDrawer'),
+  drawerBackdrop: document.getElementById('drawerBackdrop'),
+  btnDrawerToggle: document.getElementById('btnDrawerToggle'),
+  btnDrawerClose: document.getElementById('btnDrawerClose'),
+  coordLeft: document.getElementById('coordLeft'),
+  coordMid: document.getElementById('coordMid'),
+  coordRight: document.getElementById('coordRight'),
 
   // tools
   toolSelect: document.getElementById('toolSelect'),
@@ -109,6 +107,27 @@ const state = {
 };
 
 function setStatus(s){ if(els.status) els.status.textContent = s; }
+function isMobile(){ return window.matchMedia && window.matchMedia('(max-width: 1023px)').matches; }
+function openDrawer(){
+  if(!els.propDrawer) return;
+  els.propDrawer.classList.add('open');
+  if(isMobile() && els.drawerBackdrop) els.drawerBackdrop.classList.remove('hidden');
+}
+function closeDrawer(){
+  if(!els.propDrawer) return;
+  els.propDrawer.classList.remove('open');
+  if(els.drawerBackdrop) els.drawerBackdrop.classList.add('hidden');
+}
+function toggleDrawer(){
+  if(!els.propDrawer) return;
+  const open = els.propDrawer.classList.contains('open');
+  open ? closeDrawer() : openDrawer();
+}
+
+function setCoord(x,y){
+  if(els.coordMid) els.coordMid.textContent = `X: ${x}  Y: ${y}`;
+  if(els.coordRight) els.coordRight.textContent = `ZOOM: ${Math.round(state.zoom*100)}%`;
+}
 
 function setMode(m){
   state.mode = m;
@@ -175,7 +194,6 @@ function tileFromEvent(ev){
 }
 
 async function loadObjectTypes(){
-setStatus('loading types…');
   try{
     const data = await apiJson(API.objectTypes());
     state.objectTypes = data.object_types || [];
@@ -191,11 +209,25 @@ setStatus('loading types…');
 }
 
 async function loadObjects(){
-setStatus('loading objects…');
+  setStatus('loading objectsï¿½');
+
   const layer = state.showSystem ? 'all' : 'object';
-  const data = await apiJson(API.objects(layer));
-  const list = Array.isArray(data.objects) ? data.objects : (Array.isArray(data) ? data : []);
-state.objects = list;
+
+  try {
+    const data = await apiJson(API.objects(layer));
+
+    if (Array.isArray(data?.objects)) {
+      state.objects = data.objects;
+    } else {
+      console.warn('Unexpected objects payload:', data);
+      state.objects = [];
+    }
+
+  } catch (e) {
+    console.error('loadObjects failed:', e);
+    state.objects = [];
+  }
+
   draw();
 }
 
@@ -234,9 +266,9 @@ function draw(){
     ctx.lineWidth = 1;
   }
 
-    // objects (system first)
-  const base = Array.isArray(state.objects) ? state.objects : [];
-  const objs = [...base].sort((a,b)=>{
+  // objects (system first)
+    const base = Array.isArray(state.objects) ? state.objects : [];
+    const objs = [...base].sort((a,b)=>{
     const la=(a.layer==='system'?0:1), lb=(b.layer==='system'?0:1);
     if(la!==lb) return la-lb;
     return (a.id||0)-(b.id||0);
@@ -295,6 +327,8 @@ function fillProperties(o){
     draw();
     return;
   }
+  // auto-open drawer on select
+  openDrawer();
   const meta = safeJson(o.meta_json) || {};
   els.propId.textContent = o.id;
   els.propType.textContent = o.type;
@@ -359,6 +393,7 @@ async function onCanvasClick(ev){
 
 function onCanvasMove(ev){
   const {x,y} = tileFromEvent(ev);
+  if(x>=0 && y>=0 && x<state.gridW && y<state.gridH){ setCoord(x,y); }
   if(state.mode !== 'place'){
     if(state.hover){ state.hover=null; draw(); }
     return;
@@ -474,56 +509,50 @@ window.addEventListener('keydown', (ev)=>{
     await loadObjectTypes();
     await loadObjects();
     fillProperties(null);
+    setCoord('-', '-');
 
     setMode('select');
-    els.canvas.addEventListener('click', onCanvasClick);
-    els.canvas.addEventListener('mousemove', onCanvasMove);
-    els.canvas.addEventListener('mouseleave', ()=>{ if(state.hover){ state.hover=null; draw(); } });
+    if(els.canvas) els.canvas.addEventListener('click', onCanvasClick);
+    if(els.canvas) els.canvas.addEventListener('mousemove', onCanvasMove);
+    if(els.canvas) els.canvas.addEventListener('mouseleave', ()=>{ if(state.hover){ state.hover=null; draw(); } });
 
     window.addEventListener('resize', fitCanvas);
     fitCanvas();
 
-    // wire ui (null-safe)
-if (els.toolSelect) els.toolSelect.addEventListener('click', ()=> setMode('select'));
-if (els.toolPlace)  els.toolPlace.addEventListener('click', ()=> setMode('place'));
-if (els.typeSearch) els.typeSearch.addEventListener('input', renderPalette);
+    // drawer wiring
+    if(els.btnDrawerToggle) els.btnDrawerToggle.addEventListener('click', toggleDrawer);
+    if(els.btnDrawerClose) els.btnDrawerClose.addEventListener('click', closeDrawer);
+    if(els.drawerBackdrop) els.drawerBackdrop.addEventListener('click', closeDrawer);
+    window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeDrawer(); });
 
-if (els.toggleSystem) els.toggleSystem.addEventListener('change', async ()=>{
-  state.showSystem = !!els.toggleSystem.checked;
-  await loadObjects();
-});
-if (els.toggleLabels) els.toggleLabels.addEventListener('change', ()=>{
-  state.showLabels = !!els.toggleLabels.checked; draw();
-});
-if (els.toggleFootprints) els.toggleFootprints.addEventListener('change', ()=>{
-  state.showFootprints = !!els.toggleFootprints.checked; draw();
-});
+    // wire ui
+    if(els.toolSelect) els.toolSelect.addEventListener('click', ()=> setMode('select'));
+    if(els.toolPlace) els.toolPlace.addEventListener('click', ()=> setMode('place'));
+    if(els.typeSearch) els.typeSearch.addEventListener('input', renderPalette);
 
-if (els.btnSave) els.btnSave.addEventListener('click', async()=>{ try{ await saveSelected(); }catch(e){ alert('Save failed: '+e.message);} });
-if (els.btnMove) els.btnMove.addEventListener('click', ()=> enterMove());
-if (els.btnDelete) els.btnDelete.addEventListener('click', async()=>{ try{ await deleteSelected(); }catch(e){ alert('Delete failed: '+e.message);} });
+    if(els.toggleSystem) els.toggleSystem.addEventListener('change', async ()=>{
+      state.showSystem = !!els.toggleSystem.checked;
+      await loadObjects();
+    });
+    if(els.toggleLabels) els.toggleLabels.addEventListener('change', ()=>{ state.showLabels = !!els.toggleLabels.checked; draw(); });
+    if(els.toggleFootprints) els.toggleFootprints.addEventListener('change', ()=>{ state.showFootprints = !!els.toggleFootprints.checked; draw(); });
 
-if (els.btnExport) els.btnExport.addEventListener('click', async()=>{ try{ await exportJson(); }catch(e){ alert('Export failed: '+e.message);} });
-if (els.btnImport) els.btnImport.addEventListener('click', openImport);
-if (els.btnSeedSystem) els.btnSeedSystem.addEventListener('click', async()=>{ try{ await seedSystem(); }catch(e){ alert('Seed failed: '+e.message);} });
+    if(els.btnSave) els.btnSave.addEventListener('click', async()=>{ try{ await saveSelected(); }catch(e){ alert('Save failed: '+e.message);} });
+    if(els.btnMove) els.btnMove.addEventListener('click', ()=> enterMove());
+    if(els.btnDelete) els.btnDelete.addEventListener('click', async()=>{ try{ await deleteSelected(); }catch(e){ alert('Delete failed: '+e.message);} });
 
-if (els.btnCloseImport) els.btnCloseImport.addEventListener('click', closeImport);
-if (els.modalImport) els.modalImport.addEventListener('click', (ev)=>{ if(ev.target===els.modalImport) closeImport();});
-if (els.btnDryRun) els.btnDryRun.addEventListener('click', async()=>{ try{ await runImport(true);}catch(e){ alert('Dry-run failed: '+e.message);} });
-if (els.btnApply) els.btnApply.addEventListener('click', async()=>{
-  try{
-    await runImport(false);
-    await loadObjects();
-    closeImport();
+    if(els.btnExport) els.btnExport.addEventListener('click', async()=>{ try{ await exportJson(); }catch(e){ alert('Export failed: '+e.message);} });
+    if(els.btnImport) els.btnImport.addEventListener('click', openImport);
+    if(els.btnSeedSystem) els.btnSeedSystem.addEventListener('click', async()=>{ try{ await seedSystem(); }catch(e){ alert('Seed failed: '+e.message);} });
+
+    if(els.btnCloseImport) els.btnCloseImport.addEventListener('click', closeImport);
+    if(els.modalImport) els.modalImport.addEventListener('click', (ev)=>{ if(ev.target===els.modalImport) closeImport();});
+    if(els.btnDryRun) els.btnDryRun.addEventListener('click', async()=>{ try{ await runImport(true);}catch(e){ alert('Dry-run failed: '+e.message);} });
+    if(els.btnApply) els.btnApply.addEventListener('click', async()=>{ try{ await runImport(false); await loadObjects(); closeImport(); }catch(e){ alert('Apply failed: '+e.message);} });
+
+    setStatus('ready');
   }catch(e){
-    alert('Apply failed: '+e.message);
+    console.error(e);
+    setStatus('error: ' + e.message);
   }
-});
-
-console.log('ABOUT TO SET READY');
-setStatus('ready');
-} catch(e){
-  console.error('INIT ERROR', e);
-  setStatus('error: ' + e.message);
-}
 })();

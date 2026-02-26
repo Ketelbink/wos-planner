@@ -60,6 +60,7 @@ $router->get('/map/{slug}', function(array $params, array $ctx) {
     echo '<button class="chip" id="btnExport">Export</button>';
     echo '<button class="chip" id="btnImport">Import</button>';
     echo '<button class="chip" id="btnSeedSystem">Seed System</button>';
+    echo '<button class="chip" id="btnDrawerToggle">Panel</button>';
     echo '<label class="toggle"><input id="toggleSystem" type="checkbox" checked> System</label>';
     echo '<label class="toggle"><input id="toggleLabels" type="checkbox" checked> Labels</label>';
     echo '<label class="toggle"><input id="toggleFootprints" type="checkbox"> Footprints</label>';
@@ -68,42 +69,59 @@ $router->get('/map/{slug}', function(array $params, array $ctx) {
     echo '</div>';
 
     echo '<div class="shell">';
-      echo '<div class="panel">';
-        echo '<div class="head">Tools</div>';
-        echo '<div class="body">';
-          echo '<button class="btn" id="toolSelect">Select</button>';
-          echo '<div class="muted">Palette</div>';
-          echo '<input id="typeSearch" class="search" type="text" placeholder="Search type…">';
-          echo '<div id="typePalette" class="palette"></div>';
-          echo '<div class="hint">Place: hover footprint • <b>R</b> rotate • click place</div>';
-          echo '<button class="btn" id="toolPlace">Place</button>';
-        echo '</div>';
-      echo '</div>';
-
-      echo '<div class="center"><canvas id="mapCanvas"></canvas></div>';
-
-      echo '<div class="panel">';
-        echo '<div class="head">Properties</div>';
-        echo '<div class="body">';
-          echo '<div class="muted">Selected</div>';
-          echo '<div><b>ID:</b> <span id="propId">-</span></div>';
-          echo '<div><b>Type:</b> <span id="propType">-</span></div>';
-          echo '<div><b>Pos:</b> <span id="propPos">-</span></div>';
-          echo '<div><b>Layer:</b> <span id="propLayer">-</span></div>';
-          echo '<div><b>Locked:</b> <span id="propLocked">-</span></div>';
-
-          echo '<label class="field"><span class="muted">Tag</span><input id="inpTag" placeholder="REN"></label>';
-          echo '<label class="field"><span class="muted">Note</span><textarea id="inpNote" placeholder="note..."></textarea></label>';
-          echo '<label class="field"><span class="muted">Color (hex)</span><input id="inpColor" value="#7aa2ff"></label>';
-
-          echo '<div class="row">';
-            echo '<button class="btn primary" id="btnSave">Save</button>';
-            echo '<button class="btn" id="btnMove">Move</button>';
-          echo '</div>';
-          echo '<button class="btn" id="btnDelete">Delete</button>';
-        echo '</div>';
-      echo '</div>';
+  echo '<div class="panel leftpanel">';
+    echo '<div class="head">Tools</div>';
+    echo '<div class="body">';
+      echo '<button class="btn" id="toolSelect">Select</button>';
+      echo '<div class="muted">Palette</div>';
+      echo '<input id="typeSearch" class="search" type="text" placeholder="Search type…">';
+      echo '<div id="typePalette" class="palette"></div>';
+      echo '<div class="hint">Place: hover footprint • <b>R</b> rotate • click place</div>';
+      echo '<button class="btn" id="toolPlace">Place</button>';
     echo '</div>';
+  echo '</div>';
+
+  echo '<div class="center"><canvas id="mapCanvas"></canvas></div>';
+echo '</div>';
+
+// Bottom coord bar (always visible)
+echo '<div class="coordbar" id="coordBar">';
+  echo '<span id="coordLeft" class="coord-left">ARCTIC COMMAND</span>';
+  echo '<span id="coordMid" class="coord-mid">X: -  Y: -</span>';
+  echo '<span id="coordRight" class="coord-right">ZOOM: 100%</span>';
+echo '</div>';
+
+// Right drawer (properties)
+echo '<div id="drawerBackdrop" class="drawer-backdrop hidden"></div>';
+echo '<aside id="propDrawer" class="drawer open">';
+  echo '<div class="drawer-head">';
+    echo '<div class="drawer-title">Intel Panel</div>';
+    echo '<div class="drawer-actions">';
+      echo '<button class="chip" id="btnDrawerClose">Close</button>';
+    echo '</div>';
+  echo '</div>';
+
+  echo '<div class="drawer-body">';
+    echo '<div class="muted">Selected</div>';
+    echo '<div class="kv"><span class="k">ID</span><span class="v" id="propId">-</span></div>';
+    echo '<div class="kv"><span class="k">Type</span><span class="v" id="propType">-</span></div>';
+    echo '<div class="kv"><span class="k">Pos</span><span class="v" id="propPos">-</span></div>';
+    echo '<div class="kv"><span class="k">Layer</span><span class="v" id="propLayer">-</span></div>';
+    echo '<div class="kv"><span class="k">Locked</span><span class="v" id="propLocked">-</span></div>';
+
+    echo '<div class="divider"></div>';
+
+    echo '<label class="field"><span class="muted">Tag</span><input id="inpTag" placeholder="REN"></label>';
+    echo '<label class="field"><span class="muted">Note</span><textarea id="inpNote" placeholder="note..."></textarea></label>';
+    echo '<label class="field"><span class="muted">Color</span><input id="inpColor" value="#7aa2ff"></label>';
+
+    echo '<div class="row">';
+      echo '<button class="btn primary" id="btnSave">Save</button>';
+      echo '<button class="btn" id="btnMove">Move</button>';
+    echo '</div>';
+    echo '<button class="btn danger" id="btnDelete">Delete</button>';
+  echo '</div>';
+echo '</aside>';
 
     // Import modal
     echo '<div class="modal hidden" id="modalImport">';
@@ -134,7 +152,7 @@ $router->get('/map/{slug}', function(array $params, array $ctx) {
     ], JSON_UNESCAPED_SLASHES) . ';';
     echo '</script>';
 
-    echo '<script src="' . htmlspecialchars($basePath) . '/assets/map.js?v=' . time() . '"></script>';
+    echo '<script src="' . htmlspecialchars($basePath) . '/assets/map.js"></script>';
     echo '</body></html>';
 
     return null;
@@ -175,21 +193,31 @@ $router->get('/api/maps/{slug}/objects', function(array $params, array $ctx) {
     if ($xmax < $xmin) [$xmin, $xmax] = [$xmax, $xmin];
     if ($ymax < $ymin) [$ymin, $ymax] = [$ymax, $ymin];
 
-    $q = $pdo->prepare("
-        SELECT id, type, layer, is_locked, x, y, meta_json
-        FROM planner_objects
-        WHERE map_id = :map_id
-          AND x BETWEEN :xmin AND :xmax
-          AND y BETWEEN :ymin AND :ymax
-        ORDER BY id DESC
-        LIMIT 5000
-    ");
-    $q->execute([
-        'map_id' => (int)$map['id'],
-        'xmin' => $xmin, 'xmax' => $xmax,
-        'ymin' => $ymin, 'ymax' => $ymax,
-    ]);
+    $sql = "
+  SELECT id, type, layer, is_locked, x, y, meta_json
+  FROM planner_objects
+  WHERE map_id = :map_id
+    AND x BETWEEN :xmin AND :xmax
+    AND y BETWEEN :ymin AND :ymax
+";
 
+$args = [
+  'map_id' => (int)$map['id'],
+  'xmin' => $xmin, 'xmax' => $xmax,
+  'ymin' => $ymin, 'ymax' => $ymax,
+];
+
+if ($layer !== 'all') {
+  $sql .= " AND layer = :layer";
+  $args['layer'] = $layer;
+}
+
+$sql .= " ORDER BY id DESC LIMIT 5000";
+
+$q = $pdo->prepare($sql);
+$q->execute($args);
+
+return ['objects' => $q->fetchAll()];
     return ['objects' => $q->fetchAll()];
 });
 
@@ -605,7 +633,7 @@ $router->post('/api/objects/{id}/move', function(array $params, array $ctx) {
 
 
 // ----------------------------------------------------------
-// API: DELETE (locked-aware)  (router has no DELETE -> use POST)
+// API: DELETE (locked-aware)
 // ----------------------------------------------------------
 $router->post('/api/objects/{id}/delete', function(array $params, array $ctx) {
     $pdo = $ctx['db']->pdo();
@@ -637,6 +665,7 @@ $router->post('/api/objects/{id}/delete', function(array $params, array $ctx) {
         return null;
     }
 });
+
 
 // ----------------------------------------------------------
 // API: EXPORT
