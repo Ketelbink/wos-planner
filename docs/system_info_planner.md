@@ -3,7 +3,7 @@
 Project: WoS Planner  
 Scope: Standalone Territory Map Web Application  
 Status: V0.1 – Foundation Phase  
-Last Updated: 2026-02-25  
+Last Updated: 2026-02-27  
 
 This document is intended to be public-repo friendly (no private host/user paths).
 
@@ -50,3 +50,26 @@ This document is intended to be public-repo friendly (no private host/user paths
 - Exact trap footprint
 - Occupancy optimizations (chunking)
 - Zoom levels & UI polish
+
+
+---
+
+## V1.2 – Camera & UI Foundation (Preparation)
+
+Scope:
+- Stabilize v1.1 endpoints and guards (no router delete(), HY093-proof layer binding, iterable-safe objects).
+- Add a unified **camera engine** for PC + mobile:
+  - Pan via pointer drag
+  - Zoom via wheel (desktop), pinch (mobile), and +/- buttons
+  - View rotation toggle: 0° (Plan View) ↔ 45° (Game View) **visual only**
+  - Reset view button
+  - Shift-hold while placing temporarily straightens view (desktop)
+
+Rules:
+- **Game coordinates remain the source of truth** (origin x,y integers).
+- Rotation is **view-only**; stored data is never rotated.
+- Locked/system objects (castle/facilities/fortresses/strongholds/turrets) remain non-movable and non-deletable, but can have “Move view to” actions later.
+
+Files impacted (v1.2):
+- `app/routes.php` (adds camera buttons; minor cleanup)
+- `public/assets/map.js` (camera transforms + pointer input)

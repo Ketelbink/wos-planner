@@ -45,7 +45,7 @@ Impact: Frontend uses iso projection + depth sorting; backend unchanged.
 -----
 
 
-## 2026-02-26 � System Layer Architecture
+## 2026-02-26 � System Layer Architecture
 
 Decision:
 All fixed map objects (castle, towers, facilities, obstacles) are stored
@@ -60,3 +60,28 @@ Single object model keeps occupancy logic unified.
 Impact:
 System layer objects block placement and are read-only by default.
 
+
+
+---
+
+## 2026-02-27 – V1.2 Camera (View-only Rotation)
+
+Decision: Implement camera pan/zoom and optional 45° rotation as **view-only** (no data rotation).  
+Reason: Match in-game feel while keeping storage stable and simple.  
+Impact: All interaction uses screen↔world transforms; DB remains integer tile origins.
+
+---
+
+## 2026-02-27 – Storage Rule: Use Game Locator Origin (Integers)
+
+Decision: Persist object positions using the **game locator origin (x,y integers)**, not center.  
+Reason: Matches in-game references and avoids float/half-tile storage.  
+Impact: Bounds and center are derived from origin + footprint.
+
+---
+
+## 2026-02-27 – Mobile/PC Input Unification
+
+Decision: Use pointer events for pan/zoom interactions (mouse + touch), with pinch zoom on mobile.  
+Reason: One consistent input path; fewer platform bugs.  
+Impact: Avoid separate touch/mouse implementations; add zoom buttons for mobile.

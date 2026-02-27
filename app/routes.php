@@ -60,6 +60,10 @@ $router->get('/map/{slug}', function(array $params, array $ctx) {
     echo '<button class="chip" id="btnExport">Export</button>';
     echo '<button class="chip" id="btnImport">Import</button>';
     echo '<button class="chip" id="btnSeedSystem">Seed System</button>';
+    echo '<button class="chip" id="btnZoomOut">−</button>';
+    echo '<button class="chip" id="btnZoomIn">+</button>';
+    echo '<button class="chip" id="btnResetView">Reset</button>';
+    echo '<button class="chip" id="btnRotateView">Rotate</button>';
     echo '<button class="chip" id="btnDrawerToggle">Panel</button>';
     echo '<label class="toggle"><input id="toggleSystem" type="checkbox" checked> System</label>';
     echo '<label class="toggle"><input id="toggleLabels" type="checkbox" checked> Labels</label>';

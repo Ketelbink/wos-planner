@@ -16,7 +16,27 @@ Status: Active Development
 
 ---
 
-## V0.2 – Map MVP (In Progress)
+## V1.1 – Map MVP (Current)
+
+- Object placement API
+- Tile occupancy validation
+- Delete/Move for user objects
+- System seed support
+
+---
+
+## V1.2 – Stabilization + Camera/UI Foundation (Next)
+
+- Endpoint conventions finalized (delete via POST; no router delete)
+- HY093-proof layer filtering
+- Frontend iterable-safe guards
+- Camera engine: pan/zoom/reset + view rotation 0°/45°
+- Mobile-friendly controls (pointer events + pinch + zoom buttons)
+- Action menu framework (future-proof)
+
+---
+
+## V0.2 – Map MVP (Legacy notes)
 
 - Isometric (diamond) rendering
 - Object placement API
