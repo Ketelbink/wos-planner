@@ -1,4 +1,4 @@
 <?php
 declare(strict_types=1);
 
-echo "WoS Planner is running.";
+echo "WoS Map is running.";
